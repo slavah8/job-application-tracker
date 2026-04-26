@@ -1,0 +1,147 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ApplicationStatus {
+  SAVED
+  APPLIED
+  OA
+  INTERVIEW
+  REJECTED
+  OFFER
+}
+
+enum EmailProvider {
+  YAHOO
+  GMAIL
+  OUTLOOK
+  IMAP
+}
+
+enum EmailSyncStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+model Application {
+  id              String                     @id @default(cuid())
+  company         String
+  roleTitle       String
+  applicationLink String?
+  dateApplied     DateTime?
+  status          ApplicationStatus          @default(SAVED)
+  notes           String?                    @db.Text
+
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  statusHistory   ApplicationStatusHistory[]
+  emails          Email[]
+  emailMatches    EmailApplicationMatch[]
+
+  @@index([company])
+  @@index([roleTitle])
+  @@index([status])
+  @@map("applications")
+}
+
+model Email {
+  id                String       @id @default(cuid())
+  provider          EmailProvider @default(YAHOO)
+  providerMessageId String       @unique
+  subject           String
+  fromAddress       String
+  bodyPreview       String?      @db.Text
+  receivedAt        DateTime
+  applicationId     String?
+
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  application       Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@index([applicationId])
+  @@index([receivedAt])
+  @@map("emails")
+}
+
+model ApplicationStatusHistory {
+  id             String            @id @default(cuid())
+  applicationId  String
+  previousStatus ApplicationStatus?
+  newStatus      ApplicationStatus
+  reason         String?           @db.Text
+  createdAt      DateTime          @default(now())
+
+  application    Application       @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+  @@map("application_status_history")
+}
+
+model EmailAccount {
+  id                 String            @id @default(cuid())
+  provider           EmailProvider
+  emailAddress       String
+  displayName        String?
+  syncStatus         EmailSyncStatus   @default(PAUSED)
+  lastSyncedAt       DateTime?
+  providerAccountId  String?
+  accessToken        String?           @db.Text
+  refreshToken       String?           @db.Text
+
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  emails             SyncedEmail[]
+
+  @@unique([provider, emailAddress])
+  @@index([provider])
+  @@map("email_accounts")
+}
+
+model SyncedEmail {
+  id                String                   @id @default(cuid())
+  emailAccountId    String
+  providerMessageId String
+  threadId          String?
+  fromAddress       String
+  toAddress         String?
+  subject           String
+  snippet           String?                  @db.Text
+  receivedAt        DateTime
+  rawMetadata       Json?
+
+  createdAt         DateTime                 @default(now())
+
+  emailAccount      EmailAccount             @relation(fields: [emailAccountId], references: [id], onDelete: Cascade)
+  matches           EmailApplicationMatch[]
+
+  @@unique([emailAccountId, providerMessageId])
+  @@index([emailAccountId])
+  @@index([receivedAt])
+  @@map("synced_emails")
+}
+
+model EmailApplicationMatch {
+  id             String        @id @default(cuid())
+  applicationId  String
+  syncedEmailId  String
+  confidence     Float?
+  matchReason    String?
+  createdAt      DateTime      @default(now())
+
+  application    Application   @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  syncedEmail    SyncedEmail   @relation(fields: [syncedEmailId], references: [id], onDelete: Cascade)
+
+  @@unique([applicationId, syncedEmailId])
+  @@index([applicationId])
+  @@index([syncedEmailId])
+  @@map("email_application_matches")
+}
