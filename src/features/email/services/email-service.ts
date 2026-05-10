@@ -35,6 +35,7 @@ export type RecentEmailsResult = {
   fetchLimit: number;
   source: "db";
   error?: string;
+  autoCreatedCount?: number;
 };
 
 function logYahooSync(message: string) {
@@ -164,12 +165,14 @@ function buildResult(
   emails: EmailPreviewItem[],
   source: RecentEmailsResult["source"],
   error?: string,
+  autoCreatedCount?: number,
 ): Promise<RecentEmailsResult> {
   return classifyEmails(emails).then((classifiedResult) => ({
     ...classifiedResult,
     fetchLimit: RECENT_EMAIL_FETCH_LIMIT,
     source,
     error,
+    autoCreatedCount,
   }));
 }
 
@@ -240,9 +243,14 @@ export async function syncRecentEmails(
     logYahooSync(`Emails stored/upserted=${storedCount}`);
 
     const syncedEmails = await getEmails(limit);
-    await autoCreateApplicationsFromEmails(syncedEmails);
+    const autoCreatedCount = await autoCreateApplicationsFromEmails(syncedEmails);
 
-    const { result } = await buildLoggedResult(await getEmails(limit), "db");
+    const { result } = await buildLoggedResult(
+      await getEmails(limit),
+      "db",
+      undefined,
+    );
+    result.autoCreatedCount = autoCreatedCount;
     logYahooSync(`Sync total time=${Date.now() - startedAt}ms`);
 
     return result;

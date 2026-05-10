@@ -38,7 +38,11 @@ export async function syncYahooEmails(
     };
   }
 
+  const createdText = result.autoCreatedCount
+    ? ` Created ${result.autoCreatedCount} new applications.`
+    : "";
+
   return {
-    message: `Synced ${result.scannedCount} recent Yahoo emails.`,
+    message: `Synced ${result.scannedCount} recent Yahoo emails.${createdText}`,
   };
 }

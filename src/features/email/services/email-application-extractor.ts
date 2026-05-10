@@ -18,9 +18,17 @@ const EXTRACTION_THRESHOLD = 0.75;
 
 function cleanValue(value: string | null | undefined) {
   return (value ?? "")
-    .replace(/^(re|fw|fwd):\s*/i, "")
+    .replace(/^(re|fw|fwd|external):\s*/i, "")
+    .replace(/^\[external\]\s*/i, "")
+    .replace(/\b[A-Z]\d{5,}\b/g, "")
+    .replace(/\bR\d{5,}\b/gi, "")
+    .replace(/\s+workday$/i, "")
+    .replace(/\s+human resources$/i, "")
+    .replace(/\s+hr$/i, "")
+    .replace(/\s*,\s*,/g, ",")
+    .replace(/^\s*the\s+/i, "")
     .replace(/\s+/g, " ")
-    .replace(/^[\s"'“”]+|[\s"'“”,.]+$/g, "")
+    .replace(/^[\s"']+|[\s"',.]+$/g, "")
     .trim();
 }
 
@@ -72,6 +80,63 @@ function extractFromSubject(email: EmailPreviewItem) {
     reasons.push("Matched subject pattern: Role position - Company.");
   }
 
+  const interestRoleCompanyMatch = subject.match(
+    /^thanks for your interest\s+(.+?)\s+with\s+(.+)$/i,
+  );
+
+  if (!company && interestRoleCompanyMatch) {
+    roleTitle = cleanValue(interestRoleCompanyMatch[1]);
+    company = cleanValue(interestRoleCompanyMatch[2]);
+    confidence += 0.85;
+    reasons.push("Matched subject pattern: Thanks for your interest Role with Company.");
+  }
+
+  const applicationForRoleMatch = subject.match(/^your application for\s+(.+)$/i);
+
+  if (!roleTitle && applicationForRoleMatch) {
+    roleTitle = cleanValue(applicationForRoleMatch[1]);
+    confidence += 0.35;
+    reasons.push("Matched subject pattern: Your application for Role.");
+  }
+
+  const applicationWithCompanyMatch = subject.match(/^your application with\s+(.+)$/i);
+
+  if (!company && applicationWithCompanyMatch) {
+    company = cleanValue(applicationWithCompanyMatch[1]);
+    confidence += 0.45;
+    reasons.push("Matched subject pattern: Your Application with Company.");
+  }
+
+  const companyApplicationMatch = subject.match(
+    /^(.+?)\s+thanks you for your application\s+-\s+(.+)$/i,
+  );
+
+  if (!company && companyApplicationMatch) {
+    company = cleanValue(companyApplicationMatch[1]);
+    roleTitle = cleanValue(companyApplicationMatch[2]);
+    confidence += 0.85;
+    reasons.push("Matched subject pattern: Company thanks you - Role.");
+  }
+
+  const recentApplicationMatch = subject.match(
+    /^thank you for your recent application to\s+([^,]+),\s*(.+)$/i,
+  );
+
+  if (!company && recentApplicationMatch) {
+    company = cleanValue(recentApplicationMatch[1]);
+    roleTitle = cleanValue(recentApplicationMatch[2]);
+    confidence += 0.85;
+    reasons.push("Matched subject pattern: recent application to Company, Role.");
+  }
+
+  const applyingToCompanyMatch = subject.match(/^thank you for applying to\s+(.+)$/i);
+
+  if (!company && applyingToCompanyMatch) {
+    company = cleanValue(applyingToCompanyMatch[1]);
+    confidence += 0.45;
+    reasons.push("Matched subject pattern: Thank you for applying to Company.");
+  }
+
   const interestMatch = subject.match(/thank you for your interest in\s+(.+)$/i);
 
   if (!company && interestMatch) {
@@ -90,16 +155,50 @@ function extractFromSubject(email: EmailPreviewItem) {
 
 function extractRoleFromBody(email: EmailPreviewItem) {
   const text = getReadableText(email);
-  const submissionMatch = text.match(
-    /(?:submission|application)\s+to\s+our\s+(.+?)\s+position/i,
-  );
-
-  if (submissionMatch) {
-    return {
-      roleTitle: cleanValue(submissionMatch[1]),
-      confidence: 0.35,
+  const rolePatterns = [
+    {
+      pattern: /(?:submission|application)\s+to\s+our\s+(.+?)\s+position/i,
       reason: "Matched body pattern: submission/application to our Role position.",
-    };
+      roleGroup: 1,
+    },
+    {
+      pattern:
+        /application\s+to\s+the\s+(.+?)\s*,?\s*(?:[A-Z]\d{5,}|R\d{5,})?\s*,?\s+position/i,
+      reason: "Matched body pattern: application to the Role position.",
+      roleGroup: 1,
+    },
+    {
+      pattern: /application\s+for\s+the\s+(.+?)\s+role/i,
+      reason: "Matched body pattern: application for the Role role.",
+      roleGroup: 1,
+    },
+    {
+      pattern: /apply\s+for\s+the\s+position\s+of\s+(.+?)\s+with\s+([A-Z][A-Za-z0-9 &.-]+)/i,
+      reason: "Matched body pattern: position of Role with Company.",
+      roleGroup: 1,
+    },
+    {
+      pattern: /application\s+for\s+(.+?)\s+unfortunately/i,
+      reason: "Matched body pattern: application for Role before rejection.",
+      roleGroup: 1,
+    },
+    {
+      pattern: /applying\s+to\s+(.+?)\s+for\s+the\s+(.+?)\s+role/i,
+      reason: "Matched body pattern: applying to Company for the Role role.",
+      roleGroup: 2,
+    },
+  ];
+
+  for (const rolePattern of rolePatterns) {
+    const match = text.match(rolePattern.pattern);
+
+    if (match) {
+      return {
+        roleTitle: cleanValue(match[rolePattern.roleGroup]),
+        confidence: 0.35,
+        reason: rolePattern.reason,
+      };
+    }
   }
 
   return {
@@ -136,6 +235,56 @@ function extractCompanyFromSenderDomain(email: EmailPreviewItem) {
   };
 }
 
+function extractCompanyFromSenderDisplay(email: EmailPreviewItem) {
+  const displayName = email.fromAddress.match(/^([^<@]+)</)?.[1];
+  const cleanedDisplayName = cleanValue(displayName);
+
+  if (!cleanedDisplayName || /^(no-reply|noreply|indeed)$/i.test(cleanedDisplayName)) {
+    return {
+      company: null,
+      confidence: 0,
+      reason: null,
+    };
+  }
+
+  return {
+    company: cleanedDisplayName,
+    confidence: 0.35,
+    reason: "Matched sender display name as company clue.",
+  };
+}
+
+function extractCompanyFromBody(email: EmailPreviewItem) {
+  const text = getReadableText(email);
+  const footerMatch = text.match(/\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,3})\s+·/);
+
+  if (footerMatch) {
+    return {
+      company: cleanValue(footerMatch[1]),
+      confidence: 0.35,
+      reason: "Matched company footer text.",
+    };
+  }
+
+  const positionWithCompanyMatch = text.match(
+    /position\s+of\s+.+?\s+with\s+([A-Z][A-Za-z0-9 &.-]+?)(?:\.|\s+We\s)/,
+  );
+
+  if (positionWithCompanyMatch) {
+    return {
+      company: cleanValue(positionWithCompanyMatch[1]),
+      confidence: 0.35,
+      reason: "Matched body pattern: position with Company.",
+    };
+  }
+
+  return {
+    company: null,
+    confidence: 0,
+    reason: null,
+  };
+}
+
 export function extractApplicationFromEmail(
   email: EmailPreviewItem,
   classification: EmailClassification,
@@ -145,6 +294,8 @@ export function extractApplicationFromEmail(
   const subjectExtraction = extractFromSubject(email);
   const bodyRoleExtraction = extractRoleFromBody(email);
   const senderCompanyExtraction = extractCompanyFromSenderDomain(email);
+  const senderDisplayExtraction = extractCompanyFromSenderDisplay(email);
+  const bodyCompanyExtraction = extractCompanyFromBody(email);
   let company = subjectExtraction.company;
   let roleTitle = subjectExtraction.roleTitle;
   let confidence = subjectExtraction.confidence;
@@ -163,6 +314,18 @@ export function extractApplicationFromEmail(
     reasons.push(senderCompanyExtraction.reason ?? "");
   }
 
+  if (!company && senderDisplayExtraction.company) {
+    company = senderDisplayExtraction.company;
+    confidence += senderDisplayExtraction.confidence;
+    reasons.push(senderDisplayExtraction.reason ?? "");
+  }
+
+  if (!company && bodyCompanyExtraction.company) {
+    company = bodyCompanyExtraction.company;
+    confidence += bodyCompanyExtraction.confidence;
+    reasons.push(bodyCompanyExtraction.reason ?? "");
+  }
+
   if (classification.isJobRelated) {
     confidence += 0.1;
     reasons.push("Email is classified as job-related.");
@@ -175,7 +338,7 @@ export function extractApplicationFromEmail(
       classification.isJobRelated &&
       Boolean(company) &&
       Boolean(roleTitle) &&
-      confidence >= EXTRACTION_THRESHOLD,
+      confidence + Number.EPSILON >= EXTRACTION_THRESHOLD,
     company,
     roleTitle,
     status,

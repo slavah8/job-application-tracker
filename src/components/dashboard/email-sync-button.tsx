@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 
 import { syncYahooEmails } from "@/features/email/actions/sync-email";
 
@@ -12,10 +13,17 @@ type SyncEmailState = {
 const initialSyncEmailState: SyncEmailState = {};
 
 export function EmailSyncButton() {
+  const router = useRouter();
   const [state, formAction, isPending] = useActionState(
     syncYahooEmails,
     initialSyncEmailState,
   );
+
+  useEffect(() => {
+    if (state.message) {
+      router.refresh();
+    }
+  }, [router, state.message]);
 
   return (
     <form action={formAction} className="space-y-2">
